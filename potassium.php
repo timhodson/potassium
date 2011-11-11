@@ -4,6 +4,8 @@
 class Potassium {
   var $_apikey = '';
   var $_responses = array();
+  var $_slpit_n_lines = 10000 ;
+  var $_files_to_upload = array();
   
   function __construct($apikey, $httpconfig = array()) {
     $this->_apikey = $apikey;
@@ -13,11 +15,9 @@ class Potassium {
   // Call an API and return the results in the most useful format possible
   // @return null if the request was not successful, an array or string otherwise
   function get($api_name_or_uri, $params = array(), $output='json') {
-    if (strpos($api_name_or_uri, 'http://api.kasabi.com/api/') !== 0) {
-      $api_name_or_uri = 'http://api.kasabi.com/api/' . $api_name_or_uri;
-    }
-    
-    $uri = $api_name_or_uri . '?apikey=' . urlencode($this->_apikey) . '&output=' . urlencode($output);
+       
+    $uri = api_full_name($api_name_or_uri) . '?apikey=' . urlencode($this->_apikey) . '&output=' . urlencode($output);
+
     foreach ($params as $k => $v) {
       if (is_array($v)) $v = join(',', $v);
       $uri .= '&' . $k . '=' . urlencode($v);
@@ -48,6 +48,54 @@ class Potassium {
     }
   }
   
+  //post url to the update API
+  function update_from_uri($dataset_name, $data_uri){
+    $uri = 'http://api.kasabi.com/dataset/'.$dataset_name.'/store';
+    
+    $params = array(  'data-uri' => urlencode($data_uri) , 
+                      'apikey' => urlencode($this->_apikey) ) ;
+    
+    $this->_do_post($uri, $params);
+
+    $response = $this->last_response();
+    
+    if ($response->responseCode < 200 || $response->responseCode >= 300) {
+      return null;
+    }else{
+      return $response->body ;
+    }
+
+    //TODO throw errors?
+
+  }
+  
+  // post a file to the update API
+  function update_from_file($dataset_name, $file, $content_type){
+
+    $uri = 'http://api.kasabi.com/dataset/'.$dataset_name.'/store';
+
+    // we'll automatically chunk any file into $this->_split_n_lines.
+    split_file($file);
+
+    $this->_httpconfig['header'][] = 'Content-Type: '.$content_type ;
+
+    // send each file individually
+    foreach ($this->_files_to_upload as $k => $v){
+      $params['file']="@".$v ;
+      $this->_do_post($uri, $params);
+    }
+
+  }
+
+
+  // expand the full api name
+  function api_full_name($api_name_or_uri){
+     if (strpos($api_name_or_uri, 'http://api.kasabi.com/api/') !== 0) {
+      $api_name_or_uri = 'http://api.kasabi.com/api/' . $api_name_or_uri;
+    }
+    return $api_name_or_uri ;
+  }
+
   function last_response() {
     return $this->_responses[count($this->_responses) - 1];
   }
@@ -71,17 +119,102 @@ class Potassium {
     }
     return 'unknown';
   }
+
+  /**
+   *
+   * Split large files into smaller ones
+   * @param string $source Source file
+   * @param string $targetpath Target directory for saving files
+   * @param int $lines Number of lines to split
+   * @return void
+   */
+  function split_file($source, $targetpath='/tmp/'){
+      $i=0;
+      $j=1;
+      $date = date("m-d-y");
+      $buffer='';
+
+      $handle = @fopen ($source, "r");
+      while (!feof ($handle)) {
+          $buffer .= @fgets($handle, 4096);
+          $i++;
+          if ($i >= $this->_split_n_lines) {
+              $fname = $targetpath.".part_".$date.$j.".log";
+              $this->_files_to_upload[] = $targetpath.$fname ;
+              if (!$fhandle = @fopen($fname, 'w')) {
+                  echo "Cannot open file ($fname)";
+                  exit;
+              }
+
+              if (!@fwrite($fhandle, $buffer)) {
+                  echo "Cannot write to file ($fname)";
+                  exit;
+              }
+              fclose($fhandle);
+              $j++;
+              $buffer='';
+              $i=0;
+          }
+      }
+      fclose ($handle);
+  }
   
   function _do_get($uri) {
     $response = http_parse_message(http_get($uri, $this->_httpconfig));
     $this->_responses[] = $response;
   }
+
+  function _do_post($uri, $params=null,  $body=null) {
+    $response = http_parse_message(http_post($uri, $params, $body, $this->_httpconfig));
+    $this->_responses[] = $response;
+  }
+
 }
 
 if (!function_exists('http_get')) {
   function http_get($uri, $options) {
     $curl_handle = curl_init($uri);
 
+    curl_setopt($curl_handle, CURLOPT_FRESH_CONNECT,TRUE);
+    curl_setopt($curl_handle, CURLOPT_RETURNTRANSFER,1);
+
+    /**
+     * @see http://bugs.typo3.org/view.php?id=4292
+     */
+    if ( !(ini_get('open_basedir')) && ini_get('safe_mode') !== 'On') {
+      curl_setopt($curl_handle, CURLOPT_FOLLOWLOCATION, TRUE);
+    }
+
+    curl_setopt($curl_handle, CURLOPT_CONNECTTIMEOUT, 5);
+    curl_setopt($curl_handle, CURLOPT_TIMEOUT, isset($options['timeout']) ? $options['timeout'] : 600);
+    curl_setopt($curl_handle, CURLOPT_HEADER, 1);
+
+    $data = curl_exec($curl_handle);
+    curl_close($curl_handle);
+    return $data;
+
+  }
+}
+
+if (!function_exists('http_post')) {
+  function http_post($uri, $params=null, $body=null, $options){
+    $curl_handle = curl_init($url);
+
+    // post count fields
+    // post fields
+    curl_setopt($curl_handle, CURLOPT_POST, 1);
+    if(!is_null($params)){    
+      $params = join('&',$params);
+      curl_setopt($curl_handle, CURLOPT_POSTFIELDS, $params);
+    }
+    if(!is_null($body)){
+      curl_setopt($curl_handle, CURLOPT_POSTFIELDS, $body);
+    }
+
+    // content type
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $this->_httpconfig['header']);
+
+    curl_setopt($curl_handle, CURLOPT_BINARYTRANSFER, TRUE);
     curl_setopt($curl_handle, CURLOPT_FRESH_CONNECT,TRUE);
     curl_setopt($curl_handle, CURLOPT_RETURNTRANSFER,1);
 
