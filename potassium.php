@@ -75,6 +75,7 @@ class Potassium {
     $uri = 'http://api.kasabi.com/dataset/'.$dataset_name.'/store';
 
     // we'll automatically chunk any file into $this->_split_n_lines.
+    // note this is only safe with ntriples and nothing will 
     split_file($file);
 
     $this->_httpconfig['header'][] = 'Content-Type: '.$content_type ;
