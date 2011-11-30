@@ -208,8 +208,25 @@ class Potassium {
     $this->log->logTrace(__FUNCTION__);
 
       if (count($this->_status_uri)>=1){
-        return $this->_responses[count($this->_status_uri) - 1];
+        return $this->_status_uri[count($this->_status_uri) - 1];
       }
+  }
+
+  function is_updated(){
+    $this->log->logTrace(__FUNCTION__);
+    
+    $this->_do_get($this->last_update_status());
+    $r = $this->last_response();
+    $data = json_decode($r->body,true);
+    
+    $this->log->logTrace("data=".print_r($data,true));
+
+    
+    if ($data['status'] == 'applied' ){
+      return true ;
+    }else{
+      return false ;
+    }
   }
   
   /**
